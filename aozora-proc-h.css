@@ -1,0 +1,65 @@
+/* http://www.est.co.jp/press/110119.htm より */
+
+@charset "utf-8";
+body {
+    font-size: 14pt;
+    font-family: "HiraMinProN-W3", "@ＭＳ 明朝", serif, sans-serif;
+    margin: auto 1em;
+    padding: 1em 0;
+    max-width: 28em;
+    background-color: #fff4e7;
+}
+.sesame {
+    text-emphasis-style: sesame;
+    -webkit-text-emphasis-style: sesame;
+}
+.open_sesame {
+    text-emphasis-style: open sesame;
+    -webkit-text-emphasis-style: open sesame;
+}
+.circle {
+    text-emphasis-style: circle;
+    -webkit-text-emphasis-style: circle;
+}
+.open_circle {
+    text-emphasis-style: open circle;
+    -webkit-text-emphasis-style: open circle;
+}
+.triangle {
+    text-emphasis-style: triangle;
+    -webkit-text-emphasis-style: triangle;
+}
+.open_triangle {
+    text-emphasis-style: open triangle;
+    -webkit-text-emphasis-style: open triangle;
+}
+.double-circle {
+    text-emphasis-style: double-circle;
+    -webkit-text-emphasis-style: double-circle;
+}
+.open_double-circle {
+    text-emphasis-style: open double-circle;
+    -webkit-text-emphasis-style: open double-circle;
+}
+span.tcy {
+   line-height: 1;
+   writing-mode: horizontal-tb;
+   -webkit-writing-mode: horizontal-tb;
+}
+
+/* 青空文庫・注記記法より */
+.keigakomi {border: solid 1px;}
+div.keigakomi{
+    padding-top: 0.5em;
+    padding-bottom: 0.5em;
+    padding-right: 0.5em;
+    padding-left: 0.5em;
+}
+
+h3 { font-size: 173%; margin: 0%;}
+h4 { font-size: 144%; margin: 0%;}
+h5 { font-size: 120%; margin: 0%;}
+
+.h3 { font-size: 173%; margin: 0%;}
+.h4 { font-size: 144%; margin: 0%;}
+.h5 { font-size: 120%; margin: 0%;}
