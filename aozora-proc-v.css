@@ -11,37 +11,107 @@ body {
     -webkit-writing-mode: vertical-rl;
     background-color: #fff4e7;
 }
+.ul {
+    text-decoration: overline;
+}
+.ol {
+    text-decoration: underline;
+}
+.ul_double {
+    text-decoration: overline;
+    text-decoration-style: double;
+}
+.ol_double {
+    text-decoration: underline;
+    text-decoration-style: double;
+}
+.ul_dashed {
+    text-decoration: overline;
+    text-decoration-style: dashed;
+}
+.ol_dashed {
+    text-decoration: underline;
+    text-decoration-style: dashed;
+}
+.ul_wave {
+    text-decoration: overline;
+    text-decoration-style: wave;
+}
+.ol_wave {
+    text-decoration: underline;
+    text-decoration-style: wave;
+}
 .sesame {
     text-emphasis-style: sesame;
     -webkit-text-emphasis-style: sesame;
+}
+.sesame_left {
+    text-emphasis-style: sesame;
+    -webkit-text-emphasis-style: sesame;
+    -webkit-text-emphasis-position: under;
 }
 .open_sesame {
     text-emphasis-style: open sesame;
     -webkit-text-emphasis-style: open sesame;
 }
+.open_sesame_left {
+    text-emphasis-style: open sesame;
+    -webkit-text-emphasis-style: open sesame;
+    -webkit-text-emphasis-position: under;
+}
 .circle {
     text-emphasis-style: circle;
     -webkit-text-emphasis-style: circle;
+}
+.circle_left {
+    text-emphasis-style: circle;
+    -webkit-text-emphasis-style: circle;
+    -webkit-text-emphasis-position: under;
 }
 .open_circle {
     text-emphasis-style: open circle;
     -webkit-text-emphasis-style: open circle;
 }
+.open_circle_left {
+    text-emphasis-style: open circle;
+    -webkit-text-emphasis-style: open circle;
+    -webkit-text-emphasis-position: under;
+}
 .triangle {
     text-emphasis-style: triangle;
     -webkit-text-emphasis-style: triangle;
+}
+.triangle_left {
+    text-emphasis-style: triangle;
+    -webkit-text-emphasis-style: triangle;
+    -webkit-text-emphasis-position: under;
 }
 .open_triangle {
     text-emphasis-style: open triangle;
     -webkit-text-emphasis-style: open triangle;
 }
+.open_triangle_left {
+    text-emphasis-style: open triangle;
+    -webkit-text-emphasis-style: open triangle;
+    -webkit-text-emphasis-position: under;
+}
 .double-circle {
     text-emphasis-style: double-circle;
     -webkit-text-emphasis-style: double-circle;
 }
+.double-circle_left {
+    text-emphasis-style: double-circle;
+    -webkit-text-emphasis-style: double-circle;
+    -webkit-text-emphasis-position: under;
+}
 .open_double-circle {
     text-emphasis-style: open double-circle;
     -webkit-text-emphasis-style: open double-circle;
+}
+.open_double-circle_left {
+    text-emphasis-style: open double-circle;
+    -webkit-text-emphasis-style: open double-circle;
+    -webkit-text-emphasis-position: under;
 }
 span.tcy {
    line-height: 1;

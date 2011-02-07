@@ -1,11 +1,14 @@
-;; aozora-proc.el --- Aozora Bunko Processor
+;; aozora-proc.el --- 青空文庫プロセッサ
 
 ;; Author: Taichi Kawabata <kawabata.taichi@gmail.com>
 ;; Keywords: 青空文庫, LaTeX, HTML5
 
-(defvar aozora-proc-ver "<ver.:2011-02-11>")
+(defvar aozora-proc-ver "<ver.:2011-02-07>")
 
-;; 青空文庫・文法チェック＆LaTeX・HTML5変換
+;; 青空文庫・文法チェック＆HTML5・LaTeX変換
+
+;; TODO・底本注記の拡充
+;;       バグの報告（小さい「わ」等）
 
 ;; References:
 ;; ・青空文庫・組版案内
@@ -72,6 +75,7 @@
 
 ;; 青空文庫の文法
 
+(eval-and-compile
 (defvar aozora-proc-parse-chars
   '(
     (文字列     (+ 文字))
@@ -175,7 +179,7 @@
 
 (defvar aozora-proc-parse-line
   '((行         (+ (or 一般注記 一般文字列))) ;; 一般注記→注記文字列の順番にチェックすること。
-    (一般注記   (or 囲み注記 割り注 地上げ注記 図))
+    (一般注記   (or 囲み注記 割り注 地上げ注記 図 底本入力者注記))
     ;; ［＃ここから○○○］→［＃ここで○○○終わり］は古い記法。
     (囲み注記   (region (and "［＃" (or (substring (or 強調 左強調 字体))
                                         文字サイズ) "］"
@@ -203,7 +207,9 @@
                 (action (aozora-proc-図)))
     (図注記     (+ (and (not "(") (not "（") 文字)))
     (ファイル名 (+ (and (not ".png") 文字)))
-    (図大きさ   (and "、横" 数 "×縦" 数)))
+    (図大きさ   (and "、横" 数 "×縦" 数))
+    (底本入力者注記 (region (and "［＃底本では" 注記文字列 "］"))
+                    (action (aozora-proc-底本入力者注記))))
   "青空文庫の脇書きも含めた行全体の記法")
 
 (defvar aozora-proc-parse-block
@@ -278,6 +284,7 @@
                 (action (aozora-proc-段組み)))
     )
   "青空文庫の複数段落に対する注記")
+) ;; eval-and-compile
 
 (defvar aozora-proc-parse-line-peg
   (peg-translate-rules 
@@ -488,6 +495,8 @@ PROPをVALに設定する。"
                 (looking-back "[a-zA-Z0-9]+" nil t)
                 (looking-back "〔?[a-z'A-Z0-9]+〕" nil t)
                 (looking-back "\\s_+" nil t)
+                (looking-back "[あ-ん]+" nil t)
+                (looking-back "[ア-ン]+" nil t)
                 )
             (aozora-proc-add-text-property (match-beginning 0)
                                            (match-end 0) 'ルビ ruby)
@@ -514,6 +523,11 @@ PROPをVALに設定する。"
   (aozora-proc-let (from1 from2 to2 from3 to3 to1)
     (let ((text (buffer-substring from1 to1)))
       (aozora-proc-add-text-property from1 to1 '注釈 text))))
+
+(defun aozora-proc-底本入力者注記 ()
+  (aozora-proc-let (from to)
+    (aozora-proc-add-text-property from to '注釈 (pop aozora-proc-stack))
+    (aozora-proc-add-text-property from to 'ignorable t)))
 
 (defun aozora-proc-段落 ()
   (aozora-proc-let (from to)
@@ -810,16 +824,16 @@ PROPをVALに設定する。"
                       "</span>")
       (罫囲み         "<span class='keigakomi'>" "</span>")
       (二重罫囲み     "<span class='keigakomi'>" "</span>")
-      (傍線           "<u>" "</u>")
-      (二重傍線       "<u>" "</u>")
-      (左に傍線       "<u>" "</u>")
-      (左に二重傍線   "<u>" "</u>")
-      (破線           "<u>" "</u>")
-      (左に破線       "<u>" "</u>")
-      (鎖線           "<u>" "</u>")
-      (左に鎖線       "<u>" "</u>")
-      (波線           "<u>" "</u>")
-      (左に波線       "<u>" "</u>")
+      (傍線           "<span class='ul'>" "</span>")
+      (左に傍線       "<span class='ol'>" "</span>")
+      (二重傍線       "<span class='ul_double'>" "</span>")
+      (左に二重傍線   "<span class='ol_double'>" "</span>")
+      (破線           "<span class='ul_dashed'>" "</span>")
+      (左に破線       "<span class='ol_dashed'>" "</span>")
+      (鎖線           "<span class='ul_dashed'>" "</span>")
+      (左に鎖線       "<span class='ol_dashed'>" "</span>")
+      (波線           "<span class='ul_wave'>" "</span>")
+      (左に波線       "<span class='ol_wave'>" "</span>")
       (太字           "<b>" "</b>")
       (斜体           "<i>" "</i>")
       (下線           "<u>" "</u>")
@@ -828,29 +842,28 @@ PROPをVALに設定する。"
       (小書き         "<span class='subscript'>" "</span>")
       (行右小書き     "<span class='subscript'>" "</span>")
       (行左小書き     "<span class='subscript'>" "</span>")
-      (罫囲み         "<span class='keigakomi'>" "</span>")
       (傍点           "<span class='sesame'>" "</span>")
-      (左に傍点       "<span class='sesame'>" "</span>")
+      (左に傍点       "<span class='sesame_left'>" "</span>")
       (白ゴマ傍点     "<span class='open_sesame'>" "</span>")
-      (左に白ゴマ傍点 "<span class='open_sesame'>" "</span>")
+      (左に白ゴマ傍点 "<span class='open_sesame_left'>" "</span>")
       (丸傍点         "<span class='circle'>" "</span>")
-      (左に丸傍点     "<span class='circle'>" "</span>")
+      (左に丸傍点     "<span class='circle_left'>" "</span>")
       (白丸傍点       "<span class='open_circle'>" "</span>")
-      (左に白丸傍点   "<span class='open_circle'>" "</span>")
+      (左に白丸傍点   "<span class='open_circle_left'>" "</span>")
       (×傍点          "<span class='sesame'>" "</span>")
-      (左に×傍点      "<span class='sesame'>" "</span>")
+      (左に×傍点      "<span class='sesame_left'>" "</span>")
       (黒三角傍点     "<span class='triangle'>" "</span>")
-      (左に黒三角傍点 "<span class='triangle'>" "</span>")
+      (左に黒三角傍点 "<span class='triangle_left'>" "</span>")
       (白三角傍点     "<span class='open_triangle'>" "</span>")
-      (左に白三角傍点 "<span class='open_triangle'>" "</span>")
+      (左に白三角傍点 "<span class='open_triangle_left'>" "</span>")
       (蛇の目傍点     "<span class='double-circle'>" "</span>")
-      (左に蛇の目傍点 "<span class='double-circle'>" "</span>")
+      (左に蛇の目傍点 "<span class='double-circle_left'>" "</span>")
       (二重丸傍点     "<span class='open_double-circle'>" "</span>")
-      (左に二重丸傍点 "<span class='open_double-circle'>" "</span>")
+      (左に二重丸傍点 "<span class='open_double-circle_left'>" "</span>")
       (四角傍点       "<span class='sesame'>" "</span>")
-      (左に四角傍点   "<span class='sesame'>" "</span>")
+      (左に四角傍点   "<span class='sesame_left'>" "</span>")
       (白四角傍点     "<span class='sesame'>" "</span>")
-      (左に白四角傍点 "<span class='sesame'>" "</span>")
+      (左に白四角傍点 "<span class='sesame_left'>" "</span>")
       ;;
       (改行           "<small>(改行)</small>")
       (図 (lambda (x)
@@ -888,13 +901,19 @@ PROPをVALに設定する。"
 (defun aozora-proc-uptex (dir)
   (aozora-proc-attach-prefix-lists
    `(
+     (文字下げ)
+     (地上げ         "{\\raggedright " "}")
+     (改行天付き)
+     (文字下げ折り返し)
+     (段落字詰め)
      (大見出し       "\\section*{" "}")
      (中見出し       "\\subsection*{" "}")
      (小見出し       "\\subsubsection*{" "}")
      (段落           "\n" "\n")
-     (割り注         "\\small{" "}")
-     (注釈           "\\footnote{"      "}")
-     (ルビ           "\\kana{" "}{%s}")
+     (罫囲み         "\\fbox{" "}")
+     (二重罫囲み     "\\fbox{" "}")
+     (割り注         "\\warichu{}{" "}") ;; warichu.sty
+     (注釈           "\\footnote{" "}")
      (縦中横         "\\rensuji{" "}")
      (傍線           "\\ul{" "}")
      (二重傍線       "{\\setniju \\uc{" "}}")
@@ -905,6 +924,7 @@ PROPをVALに設定する。"
      (太字           "{\\emph " "}")
      (斜体           "{\\it " "}")
      (下線           "\\ul{" "}")
+     (ルビ           "\\kana{" "}{%s}")
      (上付き小文字   "$^{" "}$")
      (下付き小文字   "$_{" "}$")
      (漢文           (lambda (x)
