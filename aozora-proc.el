@@ -3,9 +3,9 @@
 ;; Author: Taichi Kawabata <kawabata.taichi@gmail.com>
 ;; Keywords: 青空文庫, LaTeX, HTML5
 
-(defvar aozora-proc-ver "<ver.:2011-02-07>")
+(defvar aozora-proc-ver "<ver.:2011-02-11>")
 
-;; 青空文庫・文法チェック＆HTML5・LaTeX変換
+;; 青空文庫・文法チェック＆HTML5・LaTeX・IDML変換
 
 ;; TODO・底本注記の拡充
 ;;       バグの報告（小さい「わ」等）
@@ -14,7 +14,9 @@
 ;; ・青空文庫・組版案内
 ;;   http://kumihan.aozora.gr.jp/
 
+(require 'xml)
 (require 'peg)
+(require 'cl)
 
 ;; Commentary
 (defvar aozora-proc-doc (concat "
@@ -23,7 +25,7 @@
 
    % emacs --script aozora-proc.el -f <format> file1.txt file2.txt ...
  
-     format: `html-h', `tex-h' (横書き), `html-v', `tex-v' (縦書き)
+     format: `html-h', `tex-h' (横書き), `html-v', `tex-v' `idml' (縦書き)
 
    例：ファイルを青空文庫テキストとみなし、文法チェックを行う。
        % emacs --script aozora-proc.el sample.txt
@@ -56,6 +58,8 @@
 
 ;;; Internal variables
 (defvar aozora-proc-debug t)
+(defun aozora-proc-debug (msg &rest args)
+  (if aozora-proc-debug (apply 'message (concat "AozProcDebug:" msg) args)))
 (defvar aozora-proc-stack nil)
 (make-variable-buffer-local 'aozora-proc-stack)
 (defvar aozora-proc-gaiji-table nil)
@@ -300,17 +304,6 @@
            aozora-proc-parse-chars)))
 
 ;;; Parser 
-
-(put 'aozora-proc-save-restriction lisp-indent-function 1)
-(defmacro aozora-proc-save-restriction (&rest body)
- `(save-restriction
-    (save-excursion
-      (goto-char (point-min))
-      (let* ((start (re-search-forward aozora-proc-start-regexp nil t))
-             (end (progn (goto-char (point-max))
-                         (re-search-backward aozora-proc-end-regexp nil t))))
-        (narrow-to-region (or start (point-min)) (or end (point-max)))))
-    ,@body))
 
 (defun aozora-proc-parse-line ()
   "青空文庫のルビ・修飾を含む１行パーザ。ブロック注記は解釈しない。"
@@ -628,6 +621,9 @@ PROPをVALに設定する。"
       (setq end (text-property-not-all (point) (point-max) 'aozora-proc-ignorable t))
       (delete-region start end))))
 
+(defvar aozora-proc-kana-repeat-voiced "〲") ;; "〴〵"
+(defvar aozora-proc-kana-repeat "〱") ;; "〳〵"
+
 (defun aozora-proc-replace-text ()
   (let ((start (point-min)) end text props)
     (while (setq start (text-property-not-all start (point-max) 'aozora-proc-text nil))
@@ -638,9 +634,14 @@ PROPをVALに設定する。"
       (delete-region start end)
       (insert text)
       ;;(add-text-properties start (+ start (length text)) props)
-      )))
+      (goto-char (point-min))
+      (while (search-forward "／＼" nil t)
+        (replace-match aozora-proc-kana-repeat))
+      (goto-char (point-min))
+      (while (search-forward "／″＼" nil t)
+        (replace-match aozora-proc-kana-repeat-voiced)))))
 
-(defun aozora-proc-stack-check (stack old-props new-props prios)
+(defun aozora-proc-stack-check (stack old-props new-props markups)
   "スタックを確認し、新STACK,REMOVED,ADDEDを返す。"
   (let (removed added (new-stack stack) (curr-stack stack)
         prop val prio)
@@ -671,16 +672,9 @@ PROPをVALに設定する。"
             (if (functionp format) (apply format (list val))
               (if (null format) "")))))
 
-(defvar aozora-proc-kana-repeat-voiced "〲") ;; "〴〵"
-(defvar aozora-proc-kana-repeat "〱") ;; "〳〵"
-
-(defun aozora-proc-markup ()
-  "現在のカーソル位置からバッファの最後までを `aozora-proc-method' でマークアップする。
-事前に `aozora-proc-parse' しておく必要がある。"
-  (interactive)
-  (let* ((entry (assoc aozora-proc-method aozora-proc))
-         (markups (eval (elt entry 2)))
-         old-props new-props stack added removed pos)
+(defun aozora-proc-markup (markups)
+  "現在のカーソル位置からバッファの最後までを MARKUPS でマークアップする。"
+  (let* (old-props new-props stack added removed pos)
     (while (setq pos (if (null pos) (point) (next-property-change (point))))
       (goto-char pos)
       (setq new-props (text-properties-at (point))
@@ -699,42 +693,75 @@ PROPをVALに設定する。"
         (aozora-proc-insert (elt (assoc (car added) markups) 1) (cadr added))
         (setq added (cddr added)))
       (setq old-props new-props))
-    (goto-char (point-min))
-    (while (re-search-forward "／＼" nil t)
-      (replace-match aozora-proc-kana-repeat))
-    (goto-char (point-min))
-    (while (re-search-forward "／″＼" nil t)
-      (replace-match aozora-proc-kana-repeat-voiced))
     (aozora-proc-replace-text)
-    (aozora-proc-remove-ignorable)
-    ))
+    (aozora-proc-remove-ignorable)))
 
-(defun aozora-proc-buffer (&optional buf)
-  (interactive "PbBuffer: ")
-  (let* ((entry (assoc aozora-proc-method aozora-proc))
-         (preamble (eval (elt entry 3)))
-         (prolog (eval (elt entry 4))))
-    (save-excursion
-      (if buf (switch-to-buffer buf))
-      (aozora-proc-save-restriction
-        (goto-char (point-min))
-        (aozora-proc-parse)
-        (goto-char (point-min))
-        (aozora-proc-markup))
+(defvar aozora-proc-xml-escape-regexp
+  (regexp-opt (mapcar 'cdr xml-entity-alist)))
+
+(defun aozora-proc-xml-escape-region (from to)
+  (interactive "r")
+  (save-excursion
+    (save-restriction
+      (narrow-to-region from to)
       (goto-char (point-min))
-      (when preamble
-        (goto-char (point-min))
-        (if (stringp preamble) (insert preamble)
-          (insert (car preamble))
-          (re-search-forward aozora-proc-start-regexp nil t)
-          (insert (cdr preamble))))
-      (goto-char (point-max))
-      (when prolog
-        (if (stringp prolog) (insert prolog)
-          (save-excursion (insert (cdr prolog)))
-          (re-search-backward aozora-proc-end-regexp nil t)
-          (insert (car prolog)))))))
+      (while (re-search-forward aozora-proc-xml-escape-regexp nil t)
+        (replace-match (concat "&" (car (rassoc (match-string-no-properties 0) xml-entity-alist)) ";"))))))
 
+;;;###autoload
+(defun aozora-proc ()
+  "現在のカーソル位置からバッファの最後までを `aozora-proc-method' で変換処理する。
+事前に `aozora-proc-parse' しておく必要がある。"
+  (interactive)
+  (let* ((entry (assoc aozora-proc-method aozora-proc))
+         (processor (elt entry 2))
+         old-props new-props stack added removed pos)
+    (if (functionp processor) (apply processor nil)
+      (if (symbolp processor) (setq processor (eval processor)))
+      (aozora-proc-markup processor))))
+
+;;;###autoload
+(defun aozora-proc-region (from to)
+  "領域を`aozora-proc-method'で変換する。from to がnilの場合はバッファの先頭・末尾まで処理する。"
+  (save-restriction
+    (narrow-to-region (or from (point-min)) (or to (point-max)))
+    (goto-char (point-min))
+    (aozora-proc-parse)
+    (goto-char (point-min))
+    (aozora-proc)))
+
+(defun aozora-proc-preamble-prolog (from to pred)
+  (when (and pred from to)
+    (save-restriction
+      (narrow-to-region from to)
+      (if (stringp pred) 
+          (progn (delete-region (point-min) (point-max)) (insert pred))
+        (if (functionp pred) (eval pred)
+          (goto-char (point-min))
+          (insert (car pred))
+          (goto-char (point-max))
+          (insert (cdr pred)))))))
+
+;;;###autoload
+(defun aozora-proc-buffer (&optional buf)
+  "バッファの内容を`aozora-proc-method'で変換する。"
+  (interactive "PbBuffer: ")
+  (let* ((entry    (assoc aozora-proc-method aozora-proc))
+         (preamble (eval (elt entry 3)))
+         (prolog   (eval (elt entry 4)))
+         start end)
+    (if buf (switch-to-buffer buf))
+    (goto-char (point-min))
+    (setq start (re-search-forward aozora-proc-start-regexp nil t))
+    (goto-char (point-max))
+    (setq end   (re-search-backward aozora-proc-end-regexp nil t))
+    (aozora-proc-region start end)
+    (aozora-proc-preamble-prolog (point-min) start preamble)
+    (goto-char (point-max))
+    (aozora-proc-preamble-prolog (re-search-backward aozora-proc-end-regexp nil t)
+                                 (point-max) prolog)))
+
+;;;###autoload
 (defun aozora-proc-file (file)
   "指定されたファイルを `aozora-proc-method' でマークアップして別ファイルに保存する。"
   (interactive "fFile name:")
@@ -751,10 +778,6 @@ PROPをVALに設定する。"
         (insert-file-contents file)
         (aozora-proc-buffer)))))
 
-;;;
-;;; Markup Data
-;;;
-
 (defun aozora-proc-attach-prefix-lists (lists)
   (mapcar 
    (lambda (x)
@@ -762,9 +785,12 @@ PROPをVALに設定する。"
       (intern (concat "aozora-proc-" (symbol-name (car x))))
       (cdr x))) lists))
 
-;; HTML5 & CSS3
+;;;
+;;; HTML5 & CSS3
+;;;
 
-(defun aozora-proc-html (dir)
+(defun aozora-proc-html-markups (dir)
+  "HTML用のマークアップデータを返す。"
   (aozora-proc-attach-prefix-lists
    (let ((l-top (if (eq dir 'h) "left" "top"))     ;; 行頭
          (l-end (if (eq dir 'h) "right" "bottom")) ;; 行末
@@ -872,9 +898,6 @@ PROPをVALに設定する。"
                     (if (elt x 3) (format " width='%d'" (elt x 3))) ">")))
      ))))
 
-(defvar aozora-proc-html-h (aozora-proc-html 'h))
-(defvar aozora-proc-html-v (aozora-proc-html 'v))
-
 (defvar aozora-proc-html-h-preamble
 '("<?xml version='1.0' encoding='utf-8'?>
 <link href='aozora-proc-h.css' rel='stylesheet' type='text/css' />
@@ -886,8 +909,14 @@ PROPをVALに設定する。"
 (defvar aozora-proc-html-prolog 
 '("\n<pre>\n" . "\n</pre>\n</body>\n"))
 
-;;; up-TeX
+(defun aozora-proc-html (dir)
+  "現在のカーソル位置からHTMLマークアップ処理を行う。"
+  ;;(save-excursion (aozora-proc-xml-escape-region (point) (point-max)))
+  (aozora-proc-markup (aozora-proc-html-markups dir)))
 
+;;;
+;;; up-TeX
+;;;
 (defun aozora-proc-tex-bouten (dir side str)
   (list 
    (format
@@ -898,7 +927,7 @@ PROPをVALに設定する。"
         "\n\\renewcommand{\\boutenchar}{\\hbox{\\tiny \\tate\\kern1zw \\hbox{\\yoko\\kern-5zw %s}}}\n\\bou{"))
     str) "}"))
 
-(defun aozora-proc-uptex (dir)
+(defun aozora-proc-uptex-markups (dir)
   (aozora-proc-attach-prefix-lists
    `(
      (文字下げ)
@@ -954,23 +983,272 @@ PROPをVALに設定する。"
      (左白四角傍点   ,@(aozora-proc-tex-bouten dir 'l "□"))
      )))
 
-(defvar aozora-proc-uptex-h (aozora-proc-uptex 'h))
-(defvar aozora-proc-uptex-v (aozora-proc-uptex 'v))
-
 (defvar aozora-proc-uptex-preamble "\\begin{document}\n")
 (defvar aozora-proc-uptex-prolog "\\end{document}\n")
 
+(defun aozora-proc-uptex (dir)
+  "現在のカーソル位置からup-TeX (uplatex) マークアップ処理を行う。"
+  (aozora-proc-markup (aozora-proc-uptex-markups dir)))
+
+;;; IDML
+
+(defun aozora-proc-idml ()
+  "バッファ中のパーズ済みデータをIDMLでマークアップする。"
+  (interactive)
+  ;;(save-excursion (aozora-proc-xml-escape-region (point) (point-max)))
+  (let (pos new-props old-props result stack removed added debug
+        (markups (append aozora-proc-idml-paragraph-style aozora-proc-idml-character-style)))
+    (goto-char (point-min))
+    (while (setq pos (if (null pos) (point) (next-property-change (point))))
+      (goto-char pos)
+      (setq new-props (text-properties-at (point))
+            result (aozora-proc-stack-check 
+                    stack old-props new-props
+                    markups)
+            stack   (elt result 0)
+            removed (elt result 1)
+            added   (elt result 2))
+      (if (memq 'aozora-proc-段落 removed)
+          (insert "</Content></CharacterStyleRange></ParagraphStyleRange><Br/>\n")
+        ;; else: added に、段落がある場合
+        (if (memq 'aozora-proc-段落 added)
+            (progn
+              (insert (aozora-proc-idml-para-open-tag new-props))
+              (insert "\n  "(aozora-proc-idml-char-open-tag new-props))
+              (insert "<Content>"))
+          (when (setq debug (aozora-proc-idml-char-prop-check (append added removed)))
+            ;;(aozora-proc-debug "char-prop-check-debug=%s" debug)
+            (insert "</Content></CharacterStyleRange>\n  ")
+            (insert (aozora-proc-idml-char-open-tag new-props))
+            (insert "<Content>"))))
+      (setq old-props new-props))
+    (aozora-proc-replace-text)
+    (aozora-proc-remove-ignorable)
+    (goto-char (point-min))
+    (while (search-forward "</Content><Content>" nil t) (replace-match ""))))
+
+(defun aozora-proc-idml-char-prop-check (props)
+  (let (result)
+    (dolist (x aozora-proc-idml-character-style)
+      (if (memq (car x) props) (setq result x)))
+    result))
+
+(defun aozora-proc-idml-para-open-tag (props) 
+  (aozora-proc-idml-open-tag
+   props aozora-proc-idml-paragraph-style 'ParagraphStyleRange))
+
+(defun aozora-proc-idml-char-open-tag (props)
+  (aozora-proc-idml-open-tag 
+   props aozora-proc-idml-character-style 'CharacterStyleRange))
+
+(defun aozora-proc-idml-open-tag (props style tag)
+  "IDMLの<CharacterStyleRange>/<ParagraphStyleRange>の開きタグ(文字列)を、
+PROPS STYLE TAGに応じて返す。"
+  (let (attrs extras prop val result)
+    (dolist (elem style)
+      (let* ((prop  (car elem))
+             (val   (plist-get props prop))
+             (attr  (elt elem 1))
+             (extra (elt elem 2)))
+        (when val
+          (setq attrs 
+                (append
+                 (if (functionp attr) (apply attr (list val)) attr)
+                 attrs))
+          (when extra
+            (setq extras 
+                  (append 
+                   (if (functionp extra) (apply extra (list val)) extra)
+                   extras))))))
+    (concat
+     (aozora-proc-xml-open-tag tag attrs)
+     (when extras 
+       (aozora-proc-xml extras)))))
+
+(defun aozora-proc-xml-open-tag (element attrs)
+  "Generate XML OpenTag String from ELEMENT and ATTRS."
+  (let* ((new-attrs
+          (remove-duplicates attrs :test (lambda (x y) (equal (car x) (car y)))))
+         (diff (set-difference attrs new-attrs :test 'equal)))
+    (when diff (message "Warning! Duplicate Attributes!=%s" attrs)
+          (setq attrs new-attrs))
+    (format "<%s%s>" (symbol-name element) 
+            (mapconcat (lambda (x)
+                         (format
+                          " %s=\"%s\"" (symbol-name (car x)) (cdr x))) 
+                       attrs ""))))
+
+(defun aozora-proc-xml (xml)
+  "Generate XML String from ((elem attrs (elem attr ...) (elem attr ...)))"
+  (mapconcat 
+   (lambda (x)
+     (if (stringp x) x
+       (format "%s%s</%s>"
+               (aozora-proc-xml-open-tag (elt x 0) (elt x 1))
+               (aozora-proc-xml (cddr x))
+               (symbol-name (elt x 0)))))
+   xml "\n"))
+
+(defvar aozora-proc-idml-pointsize 12)
+(defvar aozora-proc-idml-width 20)
+
+(defvar aozora-proc-idml-preamble "<?xml version='1.0' encoding='UTF-8'?>
+<idPkg:Story xmlns:idPkg='http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging' DOMVersion='7.0'>
+<Story Self=''>
+<StoryPreference StoryOrientation='Vertical'/>\n")
+(defvar aozora-proc-idml-prolog "
+</Story>\n</idPkg:Story>\n")
+
+(defvar aozora-proc-idml-paragraph-style
+  (aozora-proc-attach-prefix-lists
+   `(
+     (文字下げ         (lambda (x) (list (cons 'LeftIndent (format "%d" (* aozora-proc-idml-pointsize x))))))
+     (地上げ           ((Justification . "RightAlign")))
+     (改行天付き       (lambda (x) 
+                         (list (cons 'LeftIndent (format "%d" (* aozora-proc-idml-pointsize x)))
+                               (cons 'FirstLineIndent (format "%d" (- (* aozora-proc-idml-pointsize x)))))))
+     (文字下げ折り返し (lambda (x) 
+                         (list (cons 'LeftIndent (format "%d" (* aozora-proc-idml-pointsize (car x))))
+                               (cons 'FirstLineIndent (format "%d" (- (* aozora-proc-idml-pointsize (- (cdr x) (car x)))))))))
+     (段落字詰め       (lambda (x) 
+                         (list (cons 'RightIndent 
+                                     (format "%d" (* aozora-proc-idml-pointsize (- aozora-proc-idml-width x)))))))
+     (段落文字大       ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.4)))))
+     (段落文字小       ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 0.8)))))
+     (段落大見出し     ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.73)))))
+     (段落中見出し     ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.44)))))
+     (段落小見出し     ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.2)))))
+     (段落太字         ((FontStyle . "Bold")))
+     (段落斜体         ((FontStyle . "Italic")))
+     (段落罫囲み) ;; 今のところ良い実現案なし。
+     (段落))))    ;; Dummy
+
+(defvar aozora-proc-idml-character-style
+  ;; IDMLの場合は、((characterstyleRangeの属性) (Propertiesの要素)) (後ろに付加される追加要素))
+  (aozora-proc-attach-prefix-lists
+   `(
+     ;;(改段)
+     ;;(改丁)
+     (大見出し     ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.73)))))
+     (中見出し     ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.44)))))
+     (小見出し     ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.2)))))
+     ;;(改丁)
+     ;;(改ページ)
+     ;; sidenote     
+     (割り注       ((Warichu . "true")))
+     (注釈         ((RubyFlag . "1") (RubyString . "&lt;?AID 0004?&gt;") (RubyAlignment . "RubyRight")
+                    (RubyType . "GroupRuby") (RubyParentSpacing . "RubyParentNoAdjustment") 
+                    (RubyParentOverhangAmount . "RubyOverhangNoLimit") (RubyAutoTcyDigits . "5")
+                    (RubyAutoTcyIncludeRoman . "true"))
+                   (lambda (x)
+                     (list (format "\n <Footnote>
+  <ParagraphStyleRange>
+   <CharacterStyleRange>
+    <Content><?ACE 4?>　%s</Content>
+   </CharacterStyleRange>
+  </ParagraphStyleRange>
+ </Footnote>\n" x))))
+     (ルビ         (lambda (x) (list (cons 'RubyFlag "1") (cons 'RubyString x) (cons 'RubyType "GroupRuby"))))
+     (左ルビ       (lambda (x) (list (cons 'RubyFlag "1") (cons 'RubyString x)  
+                                     (cons 'RubyType "GroupRuby") (cons 'RubyPosition  "BelowLeft"))))
+     (漢文         (lambda (x)
+                     (list (cons 'RubyFlag "1") (cons 'RubyString (format "%s" (or (car x) "")))
+                           (cons 'RubyType "GroupRuby") (cons 'Position "Subscript")))
+                   (lambda (x) (list (concat "<Content>" (or (cdr x) "") "</Content>"))))
+     ;; inline       
+     (縦中横       ((Tatechuyoko . "true")))
+     (窓大見出し   ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.73)))))
+     (窓中見出し   ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.44)))))
+     (窓小見出し   ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.2)))))
+     (同行大見出し ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.73)))))
+     (同行中見出し ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.44)))))
+     (同行小見出し ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.2)))))
+     (大きな文字   ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 1.2)))))
+     (小さな文字   ((PointSize . ,(format "%d" (* aozora-proc-idml-pointsize 0.8)))))
+     (罫囲み) ;; 段落区切りではうまく対応不可能。何か良い方法は？
+     (二重罫囲み)
+     (傍線     ((Underline . "true")))
+     (左に傍線 ((Underline . "true")))
+     (二重傍線 ((Underline . "true")) 
+               ((Properties nil (UnderlineType ((type . "object")) "StrokeStyle/$ID/ThinThin"))))
+               ;;((UnderlineType ((type . "object")) "StrokeStyle/$ID/ThinThin")))
+     (左に二重傍線 ((Underline . "true") (UnderlineOffset . "0"))
+                   ((Properties nil (UnderlineType ((type . "object")) "StrokeStyle/$ID/ThinThin"))))
+     (破線     ((Underline . "true")) 
+               ((Properties nil (UnderlineType ((type . "object")) "StrokeStyle/$ID/Canned Dashed 3x2"))))
+     (左に破線 ((Underline . "true") (UnderlineOffset . "0"))
+               ((Properties nil (UnderlineType ((type . "object")) "StrokeStyle/$ID/Canned Dashed 3x2"))))
+     (鎖線     ((Underline . "true"))
+               ((Properties nil (UnderlineType ((type . "object")) "StrokeStyle/$ID/Canned Dashed 4x4"))))
+     (左に鎖線 ((Underline . "true") (UnderlineOffset . "0"))
+               ((Properties nil (UnderlineType ((type . "object")) "StrokeStyle/$ID/Canned Dashed 4x4"))))
+     (波線     ((Underline . "true"))
+               ((Properties nil (UnderlineType ((type . "object")) "StrokeStyle/$ID/Wavy"))))
+     (左に波線 ((Underline . "true") (UnderlineOffset . "0"))
+               ((Properties nil (UnderlineType ((type . "object")) "StrokeStyle/$ID/Wavy"))))
+     (太字     ((FontStyle . "Bold")))
+     (斜体     ((FontStyle . "Italic")))
+     (下線     ((Underline . "true")))
+     (上付き小文字   ((Position . "Subscript")))
+     (下付き小文字   ((Position . "Superscript")))
+     (小書き         (lambda (x) (list (cons 'RubyFlag "1") (cons 'RubyType "GroupRuby") (cons 'RubyString x)
+                                       (cons 'RubyPosition  "BelowLeft"))))
+     (行右小書き     (lambda (x) (list (cons 'RubyFlag "1") (cons 'RubyType "GroupRuby") (cons 'RubyString x))))
+     (行左小書き     (lambda (x) (list (cons 'RubyFlag "1") (cons 'RubyType "GroupRuby") (cons 'RubyString x)  
+                                       (cons 'RubyPosition  "BelowLeft"))))
+     (傍点           ((KentenKind . "KentenSesameDot")))
+     (左に傍点       ((KentenKind . "KentenSesameDot") (KentenPosition . "BelowLeft")))
+     (白ゴマ傍点     ((KentenKind . "KentenWhiteSesameDot")))
+     (左に白ゴマ傍点 ((KentenKind . "KentenWhiteSesameDot") (KentenPosition . "BelowLeft")))
+     (丸傍点         ((KentenKind . "KentenBlackCircle")))
+     (左に丸傍点     ((KentenKind . "KentenBlackCircle") (KentenPosition . "BelowLeft")))
+     (白丸傍点       ((KentenKind . "KentenWhiteCircle")))
+     (左に白丸傍点   ((KentenKind . "KentenWhiteCircle") (KentenPosition . "BelowLeft")))
+     (×傍点          ((KentenKind . "Custom") (KentenCustomCharacter . "×")))
+     (左に×傍点      ((KentenKind . "Custom") (KentenCustomCharacter . "×") (KentenPosition . "BelowLeft")))
+     (黒三角傍点     ((KentenKind . "KentenBlackTriangle")))
+     (左に黒三角傍点 ((KentenKind . "KentenBlackTriangle") (KentenPosition . "BelowLeft")))
+     (白三角傍点     ((KentenKind . "KentenWhiteTriangle")))
+     (左に白三角傍点 ((KentenKind . "KentenWhiteTriangle") (KentenPosition . "BelowLeft")))
+     (蛇の目傍点     ((KentenKind . "KentenFisheye")))
+     (左蛇の目傍点   ((KentenKind . "KentenFisheye") (KentenPosition . "BelowLeft")))
+     (二重丸傍点     ((KentenKind . "KentenBullseye")))
+     (左に二重丸傍点 ((KentenKind . "KentenBullseye") (KentenPosition . "BelowLeft")))
+     (四角傍点       ((KentenKind . "Custom") (KentenCustomCharacter . "■")))
+     (左に四角傍点   ((KentenKind . "Custom") (KentenCustomCharacter . "■") (KentenPosition . "BelowLeft")))
+     (白四角傍点     ((KentenKind . "Custom") (KentenCustomCharacter . "□")))
+     (左に白四角傍点 ((KentenKind . "Custom") (KentenCustomCharacter . "□") (KentenPosition . "BelowLeft")))
+     ;;
+     (改行           );;nil ("<br/>"))
+     (図             ((FontStyle . "Italic")) (lambda (x) (list (format "<Content>《図：%s》</Content>" x))))
+     )))
+
 ;;; Markups
+;; 青空文庫プラグインリスト
+;; (method-name file-name-extension main-processor
+;;              preprocessor postprocessor)
 (defvar aozora-proc
   '((validate)
-    (html-h ".html" aozora-proc-html-h
-            aozora-proc-html-h-preamble aozora-proc-html-prolog)
-    (html-v ".html" aozora-proc-html-v
-            aozora-proc-html-v-preamble aozora-proc-html-prolog)
-    (uptex-h ".tex"  aozora-proc-uptex-h
+    ;; (view   ".el"  (lambda () (aozora-proc-view)))
+    (html-h  ".html" (lambda () (aozora-proc-html 'h))
+             aozora-proc-html-h-preamble aozora-proc-html-prolog)
+    (html-v  ".html" (lambda () (aozora-proc-html 'v))
+             aozora-proc-html-v-preamble aozora-proc-html-prolog)
+    (uptex-h ".tex" (lambda () (aozora-proc-uptex 'h))
              aozora-proc-uptex-preamble aozora-proc-uptex-prolog)
-    (uptex-v ".tex"  aozora-proc-uptex-v
-             aozora-proc-uptex-preamble aozora-proc-uptex-prolog)))
+    (uptex-v ".tex"  (lambda () (aozora-proc-uptex 'v))
+             aozora-proc-uptex-preamble aozora-proc-uptex-prolog)
+    (idml    ".xml" aozora-proc-idml
+             aozora-proc-idml-preamble aozora-proc-idml-prolog)))
+
+;; General Setup
+;;;###autoload
+(defun aozora-proc-select-method (method)
+  "青空文庫プロセッサの設定"
+  (interactive
+   (list (completing-read "Aozora Proc method? " 
+                          (mapcar (lambda (x) (symbol-name (car x))) aozora-proc))))
+  (setq aozora-proc-method (intern method)))
 
 (defun aozora-proc-script (argv)
   "青空文庫プロセッサをシェルスクリプトから起動した時の処理。"

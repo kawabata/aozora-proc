@@ -4,7 +4,7 @@
 
 * aozora-proc.el について
 
-  青空文庫の文法チェッカ・HTML5・LaTeXへの出力を行うツールです。
+  青空文庫の文法チェッカ・HTML5・LaTeX・IDMLへの出力を行うツールです。
 
   本ツールは、以下の特徴があります。
 
@@ -19,17 +19,18 @@
     に、行単位処理を行うAPIを提供しています。
   - シェルスクリプトからのバッチ処理で、複数の作品を一括変換できます。
 
-  本プログラムはまだ青空文庫の注記の一部しか対応していませんが、プログ
-  ラム末尾のデータ出力設定部分を適当に拡張・変更することで、自由に拡張・
-  カスタマイズ可能です。
+  本プログラムは出力フォーマットによっては青空文庫の注記の一部しか対応
+  していませんが、プログラム末尾のデータ出力設定部分を適当に拡張・変更
+  することで、自由に拡張・カスタマイズ可能です。
 
 * 使い方：
 
 ** 前準備
 
-  1. Emacs 23.2 以降 (ucs-normalize.el が必要なため) と、peg.el
-     (http://emacswiki.org) を用意し、load-pathに含まれるディレクトリ
-     (/usr/local/share/emacs/site-lispなど）にインストールします。
+  1. Emacs (23.2 以降。ucs-normalize.el が必要なため) と、peg.el
+     (http://emacswiki.org/emacs/peg.el) を用意します。peg.elは、
+     load-pathに含まれるディレクトリ(/usr/local/share/emacs/site-lispなど）
+     にインストールします。
 
   2. 《オプショナル》 漢字データベースのサイトから、外字データファイル
      aozora_gaiji_chuki.txt
@@ -38,28 +39,34 @@
 
 ** コマンドラインでの使い方
 
-   1. コマンドラインから、 --script オプションを使って起動します。
-      以下は、複数の青空文庫テキストファイルをHTML変換する例です。
- 
-      : % emacs --script aozora-proc.el -f html-v file1.txt file2.txt ...
- 
-      ここで変換先フォーマット (-f) は `html-h', `tex-h' (横書き),
-      `html-v', `tex-v' (縦書き) が選択できます。
- 
-      縦書きHTMLは、WebKit Nightly Builds 等のブラウザで確認できます。
- 
-      処理途中で文法エラーが見付かった場合は、エラー表示をした後、そこま
-      での変換処理をファイルに保存します。
+   コマンドラインから、 `emacs --script' で起動します。
 
-      TeX版はまだ開発途上です。またマクロの衝突の問題により、いくつかの
-      修飾が重なった場合は手で修正しなければならない場合があります。
- 
-   2. 注記の検証のみしたい場合は
+   1. 注記の検証を行う場合：
  
       : % emacs --script aozora-proc.el file.txt
  
       としてください。注記に間違いがある場合はその行を表示します。（実際
       にはその前後の行で間違っている場合もあります。）
+
+   2. HTMLやLaTeXへ変換する場合：
+
+      =-f= オプションでフォーマットを指定します。
+ 
+      : % emacs --script aozora-proc.el -f html-v file1.txt file2.txt ...
+ 
+      ここで変換先フォーマット (-f) は `html-h', `uptex-h' (横書き),
+      `html-v', `uptex-v', 'idml' (縦書き) が選択できます。
+ 
+      縦書きHTMLは、WebKit Nightly Builds 等のブラウザで確認できます。
+      IDMLで指定して出力されるxmlファイルは、IDMLのストーリーファイルと
+      して利用できます。
+ 
+      処理途中で文法エラーが見付かった場合は、エラー表示をした後、そこま
+      での変換処理をファイルに保存します。
+
+      upTeX (uplatex) 版 はまだ開発途上です。またマクロの衝突の問題によ
+      り、いくつかの修飾が重なった場合は手で修正しなければならない場合
+      があります。
  
    3. 他の詳細なオプションについては
  
@@ -73,8 +80,10 @@
  
    2. 変換したいファイル（例：sample.txt）を開きます。
  
-   3. 変換したいフォーマットに aozora-proc-method を設定します。
-      例： (setq aozora-proc-method 'html-v)
+   3. M-x aozora-proc-method で、変換フォーマットを選択します。または、
+      =.emacs.d/init.el= に、以下のように変換フォーマットを設定します。
+
+      : (setq aozora-proc-method 'html-v)
  
    4. ファイルを検証したい場合は、M-x aozora-proc-parse とします。文法エ
       ラーがある場合はその箇所で停止します。
@@ -84,15 +93,28 @@
    6. バッファ全体に対して変換する場合は、M-x aozora-proc-buffer を、ファ
       イルに対して処理をしたい場合は、M-x aozora-proc-file を実行します。
 
+   7. org-mode で利用する場合は、以下のような設定を =init.el= に書いて
+      おきます。
+      : (require 'org)
+      : (require 'aozora-proc.el nil t)
+      : (when (functionp 'aozora-proc-lines)
+      :   (add-hook 'org-export-latex-final-hook
+      :             (lambda () (aozora-proc-lines 'uptex-h)))
+      :   (add-hook 'org-export-html-final-hook
+      :             (lambda () (aozora-proc-lines 'html-h))))              
+
 * 注意
 
   本プログラムを使うことによって生じるいかなる損失・損害についても作者
   は責任を負いません。
 
   本プログラムはまだコンセプトベースのα版です。要望があれば徐々に改良
-  していきます。特に、TeXはルビやセクション、その他の修飾が重複するとほ
-  とんどうまく動作しません。TeXは、eup-TeX＋金水マクロ等が必要で、また
-  往々にして修正作業をしないとコンパイルできません。
+  していきます。upTeX出力はルビやセクション、その他の修飾が重複するとマ
+  クロが衝突してうまくコンパイルできない場合がありますので、その場合は
+  手で修正する必要があります。
+
+  IDML出力をInDesignで読みこませるには、Story要素のSelf属性の設定および
+  IDMLアーカイブへの組み込みを別途行う必要があります。
 
 * ライセンス
 
