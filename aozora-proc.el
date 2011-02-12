@@ -305,20 +305,12 @@
 
 ;;; Parser 
 
-(defun aozora-proc-parse-line ()
-  "青空文庫のルビ・修飾を含む１行パーザ。ブロック注記は解釈しない。"
-  (interactive)
-  (eval aozora-proc-parse-line-peg))
-
 (defun aozora-proc-parse-lines ()
+  "青空文庫のルビ・修飾を含む行単位パーザ。ブロック注記は解釈しない。"
   (interactive)
   (aozora-proc-remove-properties (point) (point-max))
   (while (and (re-search-forward "^" nil t) (not (eobp)))
-    (eval aozora-proc-parse-line-peg)))
-
-(defun aozora-proc-parse-block ()
-  (interactive)
-  (eval aozora-proc-parse-block-peg))
+    (if (eolp) (forward-char) (eval aozora-proc-parse-line-peg))))
 
 (defun aozora-proc-parse ()
   "現在のカーソルからバッファの最後までを青空文庫注記記法でパーズする。"
@@ -353,7 +345,9 @@
 
 (defun aozora-proc-remove-properties (from to)
   (interactive "r")
-  (set-text-properties from to nil))
+  (let ((buffer-modified (buffer-modified-p)))
+    (set-text-properties from to nil)
+    (set-buffer-modified-p buffer-modified)))
 
 (put 'aozora-proc-let lisp-indent-function 1)
 (defmacro aozora-proc-let (bindings &rest body)
@@ -719,6 +713,17 @@ PROPをVALに設定する。"
     (if (functionp processor) (apply processor nil)
       (if (symbolp processor) (setq processor (eval processor)))
       (aozora-proc-markup processor))))
+
+;;;###autoload
+(defun aozora-proc-lines-buffer (&optional method)
+  "バッファ全体を`aozora-proc-method'で変換する。行のみの処理を行う。"
+  (interactive)
+  (let ((aozora-proc-method (or method aozora-proc-method)))
+    (save-restriction
+      (goto-char (point-min))
+      (aozora-proc-parse-lines)
+      (goto-char (point-min))
+      (aozora-proc))))
 
 ;;;###autoload
 (defun aozora-proc-region (from to)

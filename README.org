@@ -99,9 +99,9 @@
       : (require 'aozora-proc.el nil t)
       : (when (functionp 'aozora-proc-lines)
       :   (add-hook 'org-export-latex-final-hook
-      :             (lambda () (aozora-proc-lines 'uptex-h)))
+      :             (lambda () (aozora-proc-lines-buffer 'uptex-h)))
       :   (add-hook 'org-export-html-final-hook
-      :             (lambda () (aozora-proc-lines 'html-h))))              
+      :             (lambda () (aozora-proc-lines-buffer 'html-h))))
 
 * 注意
 
