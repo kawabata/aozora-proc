@@ -53,7 +53,7 @@
 (defvar aozora-proc-start-regexp
   "-------------------------------------------------------\n\n")
 (defvar aozora-proc-end-regexp "\n\n\n")
-(defvar aozora-proc-method 'validate
+(defvar aozora-proc-method 'html-v
   "ファイル出力のデフォルト処理形式")
 
 ;;; Internal variables
@@ -710,9 +710,9 @@ PROPをVALに設定する。"
   (let* ((entry (assoc aozora-proc-method aozora-proc))
          (processor (elt entry 2))
          old-props new-props stack added removed pos)
-    (if (functionp processor) (apply processor nil)
-      (if (symbolp processor) (setq processor (eval processor)))
-      (aozora-proc-markup processor))))
+    (if (symbolp processor) (setq processor (eval processor)))
+      (if (functionp processor) (apply processor nil)
+        (aozora-proc-markup processor))))
 
 ;;;###autoload
 (defun aozora-proc-lines-buffer (&optional method)
@@ -771,6 +771,8 @@ PROPをVALに設定する。"
   "指定されたファイルを `aozora-proc-method' でマークアップして別ファイルに保存する。"
   (interactive "fFile name:")
   (if (not (file-exists-p file)) (error "File not found! %s" file))
+  (if (not (equal "txt" (file-name-extension file)))
+      (error "File must have `.txt' extension!"))
   (let* ((entry (assoc aozora-proc-method aozora-proc))
          (suffix (elt entry 1))
          (new-file (concat (file-name-sans-extension file) suffix)))
@@ -780,6 +782,7 @@ PROPをVALに設定する。"
           (aozora-proc-buffer)
           (message "%s generated." new-file))
       (with-temp-buffer
+        (message "Validating file %s" file)
         (insert-file-contents file)
         (aozora-proc-buffer)))))
 
@@ -835,7 +838,7 @@ PROPをVALに設定する。"
       (改ページ       "<hr/>")
       ;; sidenote     
       (割り注         "<small>" "</small>")
-      (ルビ           "<ruby>" "<rt>%s</rt></ruby>")
+      (ルビ           "<ruby><rb>" "</rb><rp>《</rp><rt>%s</rt><rp>》</rp></ruby>")
       (左ルビ         "" "<small>（%s）</small>")
       (漢文           (lambda (x)
                         (concat "<sup>" (car x) "</sup><sub>" (cdr x) "</sub>")))
@@ -871,7 +874,7 @@ PROPをVALに設定する。"
       (上付き小文字   "<sup>" "</sup>")
       (下付き小文字   "<sub>" "</sub>")
       (小書き         "<span class='subscript'>" "</span>")
-      (行右小書き     "<span class='subscript'>" "</span>")
+      (行右小書き     "<span class='superscript'>" "</span>")
       (行左小書き     "<span class='subscript'>" "</span>")
       (傍点           "<span class='sesame'>" "</span>")
       (左に傍点       "<span class='sesame_left'>" "</span>")
@@ -912,13 +915,13 @@ PROPをVALに設定する。"
     (setq author (match-string 0))
     (delete-region (point-min) (point-max))
     (insert (format "<?xml version='1.0' encoding='utf-8'?>
-<html lang='ja' xml:lang='ja xmlns='http://www.w3.org/1999/xhtml'>
+<html lang='ja' xml:lang='ja' xmlns='http://www.w3.org/1999/xhtml'>
 <head><link href='aozora-proc-%s.css' rel='stylesheet' type='text/css' />
 <title>%s</title></head>
 <body><h1>%s</h1>\n<h2>%s</h2>\n" dir title title author))))
 
 (defvar aozora-proc-html-prolog 
-'("\n<pre>\n" . "\n</pre>\n</body>\n"))
+'("\n<pre>\n" . "\n</pre>\n</body></html>\n"))
 
 (defun aozora-proc-html (dir)
   "現在のカーソル位置からHTMLマークアップ処理を行う。"

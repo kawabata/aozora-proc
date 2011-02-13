@@ -80,8 +80,9 @@
  
    2. 変換したいファイル（例：sample.txt）を開きます。
  
-   3. M-x aozora-proc-method で、変換フォーマットを選択します。または、
-      =.emacs.d/init.el= に、以下のように変換フォーマットを設定します。
+   3. M-x aozora-proc-select-method で、変換フォーマットを選択します。
+      または、=.emacs.d/init.el= に、以下のように変換フォーマットを設定
+      します。
 
       : (setq aozora-proc-method 'html-v)
  
