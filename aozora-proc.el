@@ -365,7 +365,7 @@
                   (string-match "^※［＃\\(.+?\\)、[^、]+］$" text)
                   (match-string 1 text)))
            str)
-      (if (string-match "\\([12]\\)-\\([0-9][0-9]?\\)-\\([0-9][0-9]?\\)］$"
+      (if (string-match "\\([12]\\)-\\([0-9][0-9]?\\)-\\([0-9][0-9]?\\)\\(、[^、］]+\\)?］$"
                         text)
           (setq str (char-to-string
                      (make-char 
@@ -741,7 +741,7 @@ PROPをVALに設定する。"
       (narrow-to-region from to)
       (if (stringp pred) 
           (progn (delete-region (point-min) (point-max)) (insert pred))
-        (if (functionp pred) (eval pred)
+        (if (functionp pred) (apply pred nil)
           (goto-char (point-min))
           (insert (car pred))
           (goto-char (point-max))
@@ -903,14 +903,20 @@ PROPをVALに設定する。"
                     (if (elt x 3) (format " width='%d'" (elt x 3))) ">")))
      ))))
 
-(defvar aozora-proc-html-h-preamble
-'("<?xml version='1.0' encoding='utf-8'?>
-<link href='aozora-proc-h.css' rel='stylesheet' type='text/css' />
-<body><pre>\n" . "</pre>\n"))
-(defvar aozora-proc-html-v-preamble
-'("<?xml version='1.0' encoding='utf-8'?>
-<link href='aozora-proc-v.css' rel='stylesheet' type='text/css' />
-<body><pre>\n" . "</pre>\n"))
+(defun aozora-proc-html-preamble (dir)
+  (let (title author)
+    (goto-char (point-min))
+    (re-search-forward ".+" nil t)
+    (setq title (match-string 0))
+    (re-search-forward ".+" nil t)
+    (setq author (match-string 0))
+    (delete-region (point-min) (point-max))
+    (insert (format "<?xml version='1.0' encoding='utf-8'?>
+<html lang='ja' xml:lang='ja xmlns='http://www.w3.org/1999/xhtml'>
+<head><link href='aozora-proc-%s.css' rel='stylesheet' type='text/css' />
+<title>%s</title></head>
+<body><h1>%s</h1>\n<h2>%s</h2>\n" dir title title author))))
+
 (defvar aozora-proc-html-prolog 
 '("\n<pre>\n" . "\n</pre>\n</body>\n"))
 
@@ -1236,9 +1242,9 @@ PROPS STYLE TAGに応じて返す。"
   '((validate)
     ;; (view   ".el"  (lambda () (aozora-proc-view)))
     (html-h  ".html" (lambda () (aozora-proc-html 'h))
-             aozora-proc-html-h-preamble aozora-proc-html-prolog)
+             (lambda () (aozora-proc-html-preamble 'h)) aozora-proc-html-prolog)
     (html-v  ".html" (lambda () (aozora-proc-html 'v))
-             aozora-proc-html-v-preamble aozora-proc-html-prolog)
+             (lambda () (aozora-proc-html-preamble 'v)) aozora-proc-html-prolog)
     (uptex-h ".tex" (lambda () (aozora-proc-uptex 'h))
              aozora-proc-uptex-preamble aozora-proc-uptex-prolog)
     (uptex-v ".tex"  (lambda () (aozora-proc-uptex 'v))
