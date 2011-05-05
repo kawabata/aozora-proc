@@ -1,15 +1,28 @@
+@charset "utf-8";
+
+/* http://glyphwiki.org/wiki/Group:%E9%9D%92%E7%A9%BA%E6%96%87%E5%BA%AB%E5%A4%96%E5%AD%97 */
+
+@font-face {
+  font-family: "gw576446";
+  src: url("gw-aozora.ttf");
+}
+
+html {
+    writing-mode: vertical-rl;
+    -webkit-writing-mode: vertical-rl;
+}
+
 /* http://www.est.co.jp/press/110119.htm より */
 
-@charset "utf-8";
 body {
     font-size: 14pt;
-    font-family: "HiraMinProN-W3", "@ＭＳ 明朝", serif, sans-serif;
+    font-family: "HiraMinProN-W3", "@ＭＳ 明朝", "gw576446", serif, sans-serif;
     margin: auto 1em;
     padding: 1em 0;
     max-height: 28em;
-    writing-mode: vertical-rl;
-    -webkit-writing-mode: vertical-rl;
     background-color: #fff4e7;
+    line-height: 1.8;
+    text-align: justify;
 }
 .ul {
     text-decoration: overline;
