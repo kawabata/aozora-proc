@@ -7,9 +7,6 @@
 
 ;; 青空文庫・文法チェック＆HTML5・LaTeX・IDML変換
 
-;; TODO・底本注記の拡充
-;;       バグの報告（小さい「わ」等）
-
 ;; References:
 ;; ・青空文庫・組版案内
 ;;   http://kumihan.aozora.gr.jp/
@@ -17,6 +14,7 @@
 (require 'xml)
 (require 'peg)
 (require 'cl)
+(require 'csv nil t) ;; EmacsWiki (Ulf Jasper)
 
 ;; Commentary
 (defvar aozora-proc-doc (concat "
@@ -35,6 +33,7 @@
    他のオプション：
          -h              : このヘルプファイルの表示
          -g _gaiji_file_ : 青空文庫外字データファイルの位置
+         -t _toc_file_   : 青空文庫目次ファイルの位置
          -l _file_name_  : 設定用 elisp ファイルの場所
          -s 'regexp'     : 処理開始位置を指定する正規表現
          -e 'regexp'     : 処理終了位置を指定する正規表現
@@ -50,11 +49,21 @@
 ;; 外字データ.  漢字データベースのCVSサーバからダウンロードしておく。
 (defvar aozora-proc-gaiji-file 
   "~/Dropbox/cvs/kanji-database/data/aozora_gaiji_chuki.txt")
+;; http://glyphwiki.org/wiki/Group:青空文庫外字?action=edit のテキストファイルを保存する。
+(defvar aozora-proc-glyphwiki-file 
+  "~/Dropbox/cvs/kanji-database/data/aozora_glyphwiki.txt")
+;; http://github.com/kawabata/aozora-toc/aozora-toc.csv のテキストファイルを保存する。
+(defvar aozora-proc-toc-file
+  "~/Dropbox/aozora/aozora-toc/aozora-toc.csv")
+
 (defvar aozora-proc-start-regexp
   "-------------------------------------------------------\n\n")
 (defvar aozora-proc-end-regexp "\n\n\n")
+(defvar aozora-proc-work-number nil
+  "青空文庫の作品番号。インデックス作成の際に利用する。")
 (defvar aozora-proc-method 'html-v
   "ファイル出力のデフォルト処理形式")
+(defvar aozora-proc-do-not-overwrite nil)
 
 ;;; Internal variables
 (defvar aozora-proc-debug t)
@@ -63,9 +72,25 @@
 (defvar aozora-proc-stack nil)
 (make-variable-buffer-local 'aozora-proc-stack)
 (defvar aozora-proc-gaiji-table nil)
+(defvar aozora-proc-toc-table nil)
+(defvar aozora-proc-toc nil) ;; This variable is dynamically bound and should not be explicity set.
 (defvar aozora-proc-script nil)
 
-;; Initialization
+;;; CSV parser
+(defun aozora-proc-parse-csv ()
+  "現在行のCSVをパーズし、行末で停止する。行末の場合は、次の行に進める。"
+  (if (and (eolp) (not (eobp))) (forward-char))
+  (if (not (eobp))
+      (let (result)
+        (while (not (eolp))
+          (looking-at "\\(?:\"\\(\\(?:[^\"]\\|\"\"\\)*\\)\"\\|\\([^,]*\\)\\),?")
+          (setq result (cons (or (match-string 1) (match-string 2))
+                             result))
+          (goto-char (match-end 0)))
+        (if (= (char-before (point)) ?,) (setq result (cons "" result)))
+        (nreverse result))))
+
+;;; Initialization
 (defun aozora-proc-initialize ()
   (let ((table (make-hash-table :test 'equal)))
     (when (file-exists-p aozora-proc-gaiji-file)
@@ -74,9 +99,25 @@
         (goto-char (point-min))
         (while (re-search-forward "	\\([^\t][^\t]?\\)	※［＃\\(.+?\\)、ページ数-行数］" nil t)
           (puthash (match-string 2) (match-string 1) table))))
-    (setq aozora-proc-gaiji-table table)))
-
-
+    (when (file-exists-p aozora-proc-glyphwiki-file)
+      (with-temp-buffer
+        (insert-file-contents aozora-proc-glyphwiki-file)
+        (goto-char (point-min))
+        (while (re-search-forward ",\\[\\[u\\(f[0-9a-f]+\\) .+?,※［＃\\(.+?\\)、ページ数-行数］" nil t)
+          (puthash (match-string 2) (char-to-string (string-to-number (match-string 1) 16)) table))))
+    (setq aozora-proc-gaiji-table table))
+  ;; TOC
+  (let ((table (make-hash-table))
+        data num)
+    (when (file-exists-p aozora-proc-toc-file)
+      (with-temp-buffer
+        (insert-file-contents aozora-proc-toc-file)
+        (goto-char (point-min))
+        (while (and (setq data (aozora-proc-parse-csv))
+                    (setq num (string-to-number (car data))))
+          (puthash num (cdr data) table))))
+    (setq aozora-proc-toc-table table)))
+          
 ;; 青空文庫の文法
 
 (eval-and-compile
@@ -128,8 +169,6 @@
     (引用文字       (+ (and (not "」は") (not "」の") (not "」に") (not "」］") 文字)))
     ;; ［＃「…」は…　］というタイプの注記の並び
     (引用注記       (or 修飾注記 原文注記 入力者注記))
-    (ルビ注記       (or ルビ修飾注記 ルビ原文注記 ルビ入力者注記))
-    ;;
     (修飾注記       (region (and "［＃「" (region 引用文字列) "」"  修飾指定 "］"))
                     (action (aozora-proc-修飾注記)))
     (ルビ修飾注記   (region (and "［＃ルビの「" (region 引用文字列) "」"  修飾指定 "］"))
@@ -137,14 +176,9 @@
     (原文注記       (region (and "［＃「" (region 引用文字列) "」" 
                                  (region (opt "の左")) "に「" (region 引用文字列) "」の注記］"))
                     (action (aozora-proc-原文注記)))
-    (ルビ原文注記   (region (and "［＃ルビの「" (region 引用文字列) "」" 
-                                 (region (opt "の左")) "に「" (region 引用文字列) "」の注記］"))
-                    (action (aozora-proc-ルビ原文注記)))
     (入力者注記     (region (and "［＃「" (region 引用文字列) "」は" (region 底本注記) "］"))
                     (action (aozora-proc-入力者注記)))
-    (ルビ入力者注記 (region (and "［＃ルビの「" (region 引用文字列) "」は" (region 底本注記) "］"))
-                    (action (aozora-proc-ルビ入力者注記)))
-    (底本注記       (or (and "底本では「" 引用文字列 "」") "ママ" ))
+    (底本注記       (and "底本では" 注記文字列))
     ;;
     (修飾指定   (or (and "に" (substring 強調))
                     (and "の" (substring 左強調))
@@ -169,11 +203,9 @@
     (数         (region (or (+ [0-9]) (+ [０-９]) ["一二三四五六七八九十"]))
                 (action (aozora-proc-数)))
     ;; ルビ
-    (一般ルビ   (and 一般ルビ２ (* ルビ注記)))
-    (指定ルビ   (and 指定ルビ２ (* ルビ注記)))
-    (一般ルビ２ (region (and "《" 文字列 "》"))
+    (一般ルビ   (region (and "《" 文字列 "》"))
                 (action (aozora-proc-一般ルビ)))
-    (指定ルビ２ (region (and  "｜" (or 文字列 欧文) (* 引用注記) (region "《" 文字列 "》")))
+    (指定ルビ   (region (and  "｜" (or 文字列 欧文) (* 引用注記) (region "《" 文字列 "》")))
                 (action (aozora-proc-指定ルビ)))
     ;; 
     (欧文       (region (and "〔" 欧文字 (+ (or 欧文字 [!-~] 引用注記)) "〕"))
@@ -190,9 +222,10 @@
                              (region 一般文字列)
                              "［＃" (substring (or 強調 左強調 字体 文字サイズ終)) "終わり］"))
                 (action (aozora-proc-囲み注記))) ;; 外部制約：開始と終了の内容は同一であること。
-    (割り注     (region (and "［＃割り注］"
+    ;; ［＃ここから割り注］…［＃ここで割り注終わり］は非公式
+    (割り注     (region (and (or "［＃割り注］" "［＃ここから割り注］")
                              (region (+ (or 改行 一般文字列)))
-                             "［＃割り注終わり］"))
+                             (or "［＃割り注終わり］" "［＃ここで割り注終わり］")))
                 (action (aozora-proc-割り注)))
     (改行       (region "［＃改行］")
                 (action (aozora-proc-改行)))
@@ -315,19 +348,23 @@
 (defun aozora-proc-parse ()
   "現在のカーソルからバッファの最後までを青空文庫注記記法でパーズする。"
   (interactive)
-  (aozora-proc-remove-properties (point) (point-max))
-  (condition-case err
-      (while (and (re-search-forward "^" nil t) (not (eobp)))
+  ;;(aozora-proc-remove-properties (point) (point-max))
+  (while (and (re-search-forward "^" nil t) (not (eobp)))
+    (condition-case err
+      (progn
         (when (= (% (line-number-at-pos) 10) 0)
           (message 
            "validating %03d lines... %s" (line-number-at-pos)
            (if aozora-proc-script "\x1b[1A" "")))
         (eval aozora-proc-parse-block-peg))
-    (error (message "%s at line: %d, column: %d
+      ;;))
+    (error 
+     (message "%s at line: %d, column: %d
 %s
-%s^" err (line-number-at-pos) (current-column)
-     (buffer-substring (point-at-bol) (point-at-eol))
-     (make-string (current-column) ? ) nil))))
+%s^"          err 
+              (line-number-at-pos) (current-column)
+              (buffer-substring (point-at-bol) (point-at-eol))
+              (make-string (current-column) ? ) nil)))))
 
 ;;;
 ;;; Data Construction
@@ -365,14 +402,22 @@
                   (string-match "^※［＃\\(.+?\\)、[^、]+］$" text)
                   (match-string 1 text)))
            str)
-      (if (string-match "\\([12]\\)-\\([0-9][0-9]?\\)-\\([0-9][0-9]?\\)\\(、[^、］]+\\)?］$"
+      (if (string-match "\\([12]\\)-\\([0-9][0-9]?\\)-\\([0-9][0-9]?\\)\\(、.+\\)?］$"
                         text)
           (setq str (char-to-string
                      (make-char 
                       (intern (concat "japanese-jisx0213-" (match-string 1 text)))
                       (+ 32 (string-to-number (match-string 2 text)))
                       (+ 32 (string-to-number (match-string 3 text))))))
-        (setq str (gethash key aozora-proc-gaiji-table)))
+        (if (string-match "UCS-\\([0-9A-F]+\\)" text)
+            (setq str (char-to-string (string-to-number (match-string 1 text) 16)))
+          (if (string-match "補助\\([0-9][0-9]\\)\\([0-9][0-9]\\)" text)
+              (setq str (char-to-string
+                         (make-char 
+                          'japanese-jisx0212
+                          (+ 32 (string-to-number (match-string 1 text)))
+                          (+ 32 (string-to-number (match-string 2 text))))))
+            (setq str (gethash key aozora-proc-gaiji-table)))))
       (if str (aozora-proc-add-text-property from (1+ from) 'text str)
         (message "外字が見付かりません … %s" key)
         (aozora-proc-add-text-property from (1+ from)
@@ -479,7 +524,7 @@ PROPをVALに設定する。"
         (goto-char from)
         ;; 修飾部分を飛ばす処理はあとまわし
         (if (or (aozora-proc-looking-back-kanji)
-                (looking-back "[a-zA-Z0-9]+" nil t)
+                (looking-back "[a-z'A-Z0-9ａ-ｚ′Ａ-Ｚ０-９]+" nil t)
                 (looking-back "〔?[a-z'A-Z0-9]+〕" nil t)
                 (looking-back "\\s_+" nil t)
                 (looking-back "[あ-ん]+" nil t)
@@ -557,7 +602,8 @@ PROPをVALに設定する。"
      from1 to1 '図 
      (list (buffer-substring-no-properties from2 to2)
            (concat (buffer-substring-no-properties from3 to3) ".png")
-           (pop aozora-proc-stack) (pop aozora-proc-stack)))
+           (if (numberp (car aozora-proc-stack)) (pop aozora-proc-stack))
+           (if (numberp (car aozora-proc-stack)) (pop aozora-proc-stack))))
     ;; 縦横が省略された場合はnilが入る。
     (aozora-proc-add-text-property from1 to1 'ignorable t)))
 
@@ -766,6 +812,42 @@ PROPをVALに設定する。"
     (aozora-proc-preamble-prolog (re-search-backward aozora-proc-end-regexp nil t)
                                  (point-max) prolog)))
 
+(defun aozora-proc-toc (level)
+  "`aozora-proc-toc' 変数の再設定を行う。"
+  (message "aozora-proc-toc=%s" aozora-proc-toc)
+  (aset aozora-proc-toc (1- level) (1+ (aref aozora-proc-toc (1- level))))
+  (let ((i level))
+    (while (< i (length aozora-proc-toc))
+      (aset aozora-proc-toc i 0)
+      (setq i (1+ i))))
+  aozora-proc-toc)
+
+(defun aozora-proc-index (work-num)
+  "現在バッファの内容を、作品番号`work-num'のインデックスに基づいてインデックス付けする。"
+  (when (and work-num aozora-proc-toc-table)
+    (let* ((indices (gethash work-num aozora-proc-toc-table))
+           (level 1)
+           (aozora-proc-toc (make-vector (length indices) 0))
+           next-pos)
+      (when indices
+        ;; Levelを付与する。
+        (message "Attaching index data...")
+        (dolist (index indices)
+          (goto-char (point-min))
+          (while (re-search-forward index nil t)
+            (aozora-proc-add-text-property
+             (match-beginning 1) (match-end 1) 'index level))
+          (setq level (1+ level)))
+        (goto-char (point-min))
+        ;; Level をインデックスに変換する。
+        (while (setq next-pos (next-single-property-change (point) 'aozora-proc-index))
+          (goto-char next-pos)
+          (when (and (setq level (get-text-property (point) 'aozora-proc-index))
+                     (integerp level))
+            (setq next-pos (next-single-property-change (point) 'aozora-proc-index))
+            (aozora-proc-add-text-property
+             (point) next-pos 'index (mapconcat 'number-to-string (aozora-proc-toc level) "-"))))))))
+
 ;;;###autoload
 (defun aozora-proc-file (file)
   "指定されたファイルを `aozora-proc-method' でマークアップして別ファイルに保存する。"
@@ -775,12 +857,20 @@ PROPをVALに設定する。"
       (error "File must have `.txt' extension!"))
   (let* ((entry (assoc aozora-proc-method aozora-proc))
          (suffix (elt entry 1))
-         (new-file (concat (file-name-sans-extension file) suffix)))
+         (fname-sans-ext (file-name-sans-extension file))
+         (file-dir-name 
+          (file-name-nondirectory (directory-file-name (file-name-directory file))))
+         (work-num (if (string-match "^[0-9]+" file-dir-name)
+                        (string-to-number (match-string 1 file-dir-name))))
+         (new-file (concat fname-sans-ext suffix)))
     (if suffix
-        (with-temp-file new-file
-          (insert-file-contents file)
-          (aozora-proc-buffer)
-          (message "%s generated." new-file))
+        (if (and (file-exists-p new-file) aozora-proc-do-not-overwrite)
+            (message "%s already exists.  skipping..." new-file)
+          (with-temp-file new-file
+            (insert-file-contents file)
+            (aozora-proc-index work-num) ;; index 付加
+            (aozora-proc-buffer)
+            (message "%s generated." new-file)))
       (with-temp-buffer
         (message "Validating file %s" file)
         (insert-file-contents file)
@@ -808,7 +898,7 @@ PROPをVALに設定する。"
          )
     `(;; 段落
       (文字下げ       ,(concat "<div style='margin-" l-top ": %dem'>") "</div>") ;; top -> left
-      (地上げ         ,(concat "<div style='text-align:" l-end "; margin-" l-end ": %dem'>") "</div>") ;; bottom -> right
+      (地上げ         ,(concat "<div style='text-align:end; margin-" l-end ": %dem'>") "</div>") ;; bottom -> right
       (改行天付き     (lambda (x) (format ,(concat "<div style='margin-" l-top ": %dem; text-indent: -%dem;'>") x x))
                       "</div>")
       (文字下げ折り返し (lambda (x) (format ,(concat "<div style='margin-" l-top ": %dem; text-indent: %dem;'>")
@@ -842,6 +932,9 @@ PROPをVALに設定する。"
       (左ルビ         "" "<small>（%s）</small>")
       (漢文           (lambda (x)
                         (concat "<sup>" (car x) "</sup><sub>" (cdr x) "</sub>")))
+      ;; index
+      (index          (lambda (x)
+                        (concat "<span id='" x "'>")) "</span>")
       ;; inline       
       (縦中横         "<span class='tcy'>" "</span>")
       (窓大見出し     "<span class='h3'>" "</span>")
@@ -907,18 +1000,23 @@ PROPをVALに設定する。"
      ))))
 
 (defun aozora-proc-html-preamble (dir)
-  (let (title author)
+  (let (title author pos)
     (goto-char (point-min))
     (re-search-forward ".+" nil t)
     (setq title (match-string 0))
-    (re-search-forward ".+" nil t)
-    (setq author (match-string 0))
+    (setq pos (match-end 0))
+    (re-search-forward "^$" nil t)
+    (setq subinfo 
+          (mapconcat 
+           (lambda (x)
+             (concat "<h2>" x "</h2>\n"))
+           (split-string (buffer-substring pos (match-end 0)) "\n" t) ""))
     (delete-region (point-min) (point-max))
     (insert (format "<?xml version='1.0' encoding='utf-8'?>
 <html lang='ja' xml:lang='ja' xmlns='http://www.w3.org/1999/xhtml'>
 <head><link href='aozora-proc-%s.css' rel='stylesheet' type='text/css' />
 <title>%s</title></head>
-<body><h1>%s</h1>\n<h2>%s</h2>\n" dir title title author))))
+<body><h1>%s</h1>\n%s\n" dir title title subinfo))))
 
 (defvar aozora-proc-html-prolog 
 '("\n<pre>\n" . "\n</pre>\n</body></html>\n"))
@@ -1273,9 +1371,11 @@ PROPS STYLE TAGに応じて返す。"
       (setq argc (pop argv))
       (cond ((equal argc "-h") (progn (princ aozora-proc-doc) (kill-emacs 1)))
             ((equal argc "-g") (setq aozora-proc-gaiji-file (pop argv)))
+            ((equal argc "-t") (setq aozora-proc-toc-file (pop argv)))
             ((equal argc "-l") (load (pop argv)))
             ((equal argc "-s") (setq aozora-proc-start-regexp (pop argv)))
             ((equal argc "-e") (setq aozora-proc-end-regexp (pop argv)))
+            ((equal argc "-n") (setq aozora-proc-do-not-overwrite t))
             ((equal argc "-f") (progn (setq aozora-proc-method (intern (pop argv)))
                                       (if (null (assoc aozora-proc-method aozora-proc)) 
                                           (error "Not supported format!"))))
